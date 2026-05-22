@@ -237,28 +237,16 @@ claude login</code></pre>
   <p>CSV 포맷으로 저장하면 Excel에서 "타임스탬프, 발언" 2열로 나옵니다. 특정 키워드 검색하거나 통계 내기 좋음.</p>
 </div>
 
-<div class="card" style="border-left: 4px solid #2D6FF7;">
-  <h3>🧠 꽁돈 인프라 — MD 파일을 최대한 활용하는 3단계 워크플로우</h3>
-  <p>캡처한 MD 파일 하나로 <strong>세컨브레인</strong>도 만들고 <strong>카드뉴스</strong>도 만드는 파이프라인:</p>
-  <table>
-    <tr><th>단계</th><th>도구</th><th>하는 일</th></tr>
-    <tr>
-      <td><strong>① 캡처</strong></td>
-      <td>youtube-capture</td>
-      <td><kbd>Ctrl+Shift+S</kbd> → MD 파일 저장</td>
-    </tr>
-    <tr>
-      <td><strong>② 세컨브레인</strong></td>
-      <td><a href="https://github.com/kkongdon-story/wiki-llm-starter" target="_blank">wiki-llm-starter</a></td>
-      <td>MD를 <code>raw/</code>에 복사 → Codex에게 ingest 명령 → <code>wiki/</code> 지식 페이지 자동 생성</td>
-    </tr>
-    <tr>
-      <td><strong>③ 카드뉴스</strong></td>
-      <td><a href="https://github.com/kkongdon-story/gpt-image-auto" target="_blank">gpt-image-auto</a></td>
-      <td>MD 파일 임포트 → ChatGPT 카드뉴스 자동 생성 → Threads 업로드</td>
-    </tr>
-  </table>
-  <div class="tip">💡 <strong>Codex 명령어</strong> (wiki-llm-starter에서): <code>templates/llm-wiki/CLAUDE.md 규칙을 읽고 raw/ 안의 자료를 ingest 해줘. wiki/ 페이지, ontology/abox.json, log.md를 함께 업데이트하고, 마지막에 scripts/ontology_reasoner.py로 온톨로지 검사를 실행해줘.</code></div>
+<div class="card">
+  <h3>🤖 AI와 함께 쓰기</h3>
+  <p>저장된 파일을 <strong>ChatGPT, Claude, Gemini</strong>에 업로드하면 바로 활용 가능:</p>
+  <ul>
+    <li>"이 강의 핵심 3가지만 알려줘"</li>
+    <li>"어려운 용어를 쉽게 설명해줘"</li>
+    <li>"한국어로 번역해줘"</li>
+    <li>"이 내용으로 블로그 초안 써줘"</li>
+  </ul>
+  <div class="tip">💡 텍스트 파일 그대로 드래그&드롭하면 됩니다. 별도 변환 불필요.</div>
 </div>
 
 <h2 id="trouble">6. 안 될 때 — 자주 묻는 질문</h2>
