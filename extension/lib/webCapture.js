@@ -87,24 +87,14 @@ async function _extractPageContent() {
   const NOISE = [
     "script", "style", "noscript", "iframe", "object", "embed",
     "nav", "header", "footer", "aside",
-    // 버튼·툴바 — 본문 텍스트가 아님
-    "button", "[role='button']",
+    "button", "[role='button']",              // 버튼은 본문 텍스트 아님
     "[class*='ad-']", "[class*='-ad']", "[id*='ad-']", "[id*='-ad']",
     "[class*='banner']", "[class*='popup']", "[class*='cookie']",
     "[class*='newsletter']", "[class*='subscribe']",
     "[class*='comment']", "[id*='comment']",
     "[id*='sidebar']", "[class*='sidebar']",
-    // 공유·추천·이전다음 노이즈
     "[class*='sns-']", "[class*='share-']", "[class*='related-']",
     "[class*='recommend-']", "[class*='prev-next']",
-    // 한국 뉴스 UI 패턴 (기자 구독, 스크랩, 공유, 글자크기, 프린트 등)
-    "[class*='reporter']", "[class*='journalist']", "[class*='writer-info']",
-    "[class*='article-tool']", "[class*='news-tool']", "[class*='tool-bar']",
-    "[class*='article-sns']", "[class*='article-share']",
-    "[class*='font-size']", "[class*='fontsize']", "[class*='font-ctrl']",
-    "[class*='print']", "[class*='scrap']",
-    "[class*='btn-']", "[class*='-btn']", "[class*='_btn']",
-    "[class*='copyright']", "[class*='tag-list']", "[class*='keyword']",
   ].join(",");
 
   let root;
@@ -134,6 +124,10 @@ async function _extractPageContent() {
     "#content-inner",
     // 브런치
     ".wrap_body_area",
+    // AI타임스·조선·중앙·한겨레 등 한국 전문 뉴스
+    "#article-view-content-div", ".view_con", ".article_view", ".article_cont",
+    ".news_view_area", ".article_txt", ".rd_body", ".news_body",
+    ".article-content-box", ".cont_article", ".article__body",
   ];
 
   let bodyEl = null;
@@ -167,8 +161,36 @@ async function _extractPageContent() {
     bodyEl = best;
   }
 
+  // ── bodyEl 내부 2차 정리 ─────────────────────────────────────────────────────
+  // 관련기사·키워드·기자정보·도구버튼 등 bodyEl 내부 노이즈 제거.
+  // bodyEl이 live document에서 왔을 수 있으므로 항상 로컬 클론에 적용 (live DOM 보호).
+  let extractEl = bodyEl || root || document.body;
+  if (bodyEl) {
+    const INNER_NOISE = [
+      // 관련기사 / 연관 콘텐츠
+      "[class*='related']", "[class*='relation']", "[class*='recommend']",
+      "[class*='other-news']", "[class*='other-article']", "[class*='more-article']",
+      // 키워드 / 태그 블록
+      "[class*='keyword']", "[class*='tag-list']", "[class*='tags']", "[class*='hashtag']",
+      // 기자정보 / 바이라인
+      "[class*='reporter']", "[class*='journalist']", "[class*='byline']",
+      "[class*='author-info']", "[class*='writer']",
+      // 기사 도구 (공유·스크랩·프린트·글자크기)
+      "[class*='article-tool']", "[class*='art-tool']", "[class*='tools']",
+      "[class*='print']", "[class*='scrap']",
+      "[class*='font-size']", "[class*='fontsize']", "[class*='font_size']",
+      // SNS 공유 버튼
+      "[class*='share']", "[class*='sns']",
+      // 저작권 고지
+      "[class*='copyright']",
+    ].join(",");
+    const bodyClone = bodyEl.cloneNode(true);
+    bodyClone.querySelectorAll(INNER_NOISE).forEach(el => { try { el.remove(); } catch {} });
+    extractEl = bodyClone;
+  }
+
   // ── 본문 텍스트 추출 — DOM 워커로 문단 구분 보존 ────────────────────────────
-  const _rawText = extractBlockText(bodyEl || root || document.body);
+  const _rawText = extractBlockText(extractEl);
 
   // UI 라벨 후처리 필터 — 짧은 줄 중 알려진 버튼/툴바 텍스트 제거
   // 뉴스 사이트에서 기자 구독·공유·스크랩·글자크기 등이 섞이는 문제 방지

@@ -114,6 +114,11 @@
     if (!pendingSel) return;
     const { text, context, range } = pendingSel;
 
+    // debounce 타이머 즉시 취소 → 저장 직후 selectionchange가 버튼을 재표시하는 문제 방지
+    clearTimeout(debounceTimer);
+    // 선택 해제 → selectionchange 재발화 시 text === '' 이어서 hideBtn() 경로로 진입
+    try { window.getSelection()?.removeAllRanges(); } catch {}
+
     const highlight = {
       text,
       context,
