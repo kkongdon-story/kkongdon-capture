@@ -6,12 +6,12 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, writeFileSync, unlinkSync, readFileSync } from "node:fs";
 import { homedir, platform, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, dirname } from "node:path";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 
 const VERSION = "0.1.0";
-const ALLOWED_ACTIONS = new Set(["health", "summarize", "transcribe", "pythonHook"]);
+const ALLOWED_ACTIONS = new Set(["health", "summarize", "transcribe", "pythonHook", "write_file"]);
 const ALLOWED_PROVIDERS = new Set(["codex", "claude", "ollama"]);
 const MAX_MESSAGE_BYTES = 64 * 1024 * 1024; // 64 MB (오디오 전송 허용)
 
@@ -105,6 +105,43 @@ async function handleMessage(msg) {
   if (action === "pythonHook") {
     await runPythonHook(id, msg);
     return;
+  }
+  if (action === "write_file") {
+    runWriteFile(id, msg);
+    return;
+  }
+}
+
+// ---------- Obsidian vault 파일 직접 쓰기 ----------
+function runWriteFile(id, msg) {
+  const { path: filePath, content } = msg;
+  if (!filePath || typeof content !== "string") {
+    writeMessage({ id, type: "error", error: "path와 content 필수" });
+    return;
+  }
+  // 보안 1: .md/.txt 확장자만 허용
+  if (!/\.(md|txt)$/i.test(filePath)) {
+    writeMessage({ id, type: "error", error: ".md 또는 .txt 파일만 허용" });
+    return;
+  }
+  // 보안 2: path traversal 방어 — ".." 세그먼트 포함 거부
+  const resolved = resolve(filePath);
+  if (resolved.includes("..") || filePath.includes("..")) {
+    writeMessage({ id, type: "error", error: "경로에 '..' 사용 불가" });
+    return;
+  }
+  // 보안 3: 홈 디렉터리 하위만 허용 (OS 시스템 경로 보호)
+  const allowedRoot = homedir();
+  if (!resolved.startsWith(allowedRoot)) {
+    writeMessage({ id, type: "error", error: `홈 디렉터리 하위 경로만 허용 (${allowedRoot})` });
+    return;
+  }
+  try {
+    mkdirSync(dirname(resolved), { recursive: true });
+    writeFileSync(resolved, content, "utf-8");
+    writeMessage({ id, type: "done", result: { written: resolved } });
+  } catch (e) {
+    writeMessage({ id, type: "error", error: e.message });
   }
 }
 

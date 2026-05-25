@@ -22,6 +22,17 @@ const DEFAULTS = {
   licenseKey: "",
   premiumAutoClassify: false,
   premiumIncludeRelated: false,
+  // 연동 설정 (P1.3)
+  enableObsidian: false,
+  obsidianVaultPath: "",
+  enableNotion: false,
+  notionApiKey: "",
+  notionPageId: "",
+  // Wiki 서식 설정
+  enableWikiFormat: false,
+  subfolders: [],
+  lastSubfolder: "",
+  summaryInstruction: "문장을 항상 완전하게 작성하세요. 절대로 문장 중간에 끊지 마세요. 핵심 포인트의 각 항목은 반드시 마침표로 끝나는 완전한 문장이어야 합니다. 개요는 2~3개의 완전한 문장으로 작성하세요.",
 };
 
 // ───── 사용자 사전 (textarea ↔ object) ─────
@@ -195,6 +206,17 @@ async function load() {
   $("licenseKey").value = m.licenseKey;
   $("premiumAutoClassify").checked = !!m.premiumAutoClassify;
   $("premiumIncludeRelated").checked = !!m.premiumIncludeRelated;
+  // 연동 설정 (P1.3)
+  if ($("enableObsidian")) $("enableObsidian").checked = !!m.enableObsidian;
+  if ($("obsidianVaultPath")) $("obsidianVaultPath").value = m.obsidianVaultPath || "";
+  if ($("enableNotion")) $("enableNotion").checked = !!m.enableNotion;
+  if ($("notionApiKey")) $("notionApiKey").value = m.notionApiKey || "";
+  if ($("notionPageId")) $("notionPageId").value = m.notionPageId || "";
+  // Wiki 서식 설정
+  if ($("enableWikiFormat")) $("enableWikiFormat").checked = !!m.enableWikiFormat;
+  if ($("subfolders")) $("subfolders").value = Array.isArray(m.subfolders) ? m.subfolders.join("\n") : "";
+  // AI 요약 메타 지침
+  if ($("summaryInstruction")) $("summaryInstruction").value = m.summaryInstruction ?? DEFAULTS.summaryInstruction;
   updateLicenseStatus();
 }
 
@@ -219,6 +241,19 @@ async function save() {
     licenseKey: $("licenseKey").value.trim(),
     premiumAutoClassify: $("premiumAutoClassify").checked,
     premiumIncludeRelated: $("premiumIncludeRelated").checked,
+    // 연동 설정 (P1.3)
+    enableObsidian: $("enableObsidian")?.checked ?? false,
+    obsidianVaultPath: $("obsidianVaultPath")?.value.trim() || "",
+    enableNotion: $("enableNotion")?.checked ?? false,
+    notionApiKey: $("notionApiKey")?.value.trim() || "",
+    notionPageId: $("notionPageId")?.value.trim() || "",
+    // Wiki 서식 설정
+    enableWikiFormat: $("enableWikiFormat")?.checked ?? false,
+    subfolders: $("subfolders")
+      ? $("subfolders").value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+      : [],
+    // AI 요약 메타 지침
+    summaryInstruction: $("summaryInstruction")?.value.trim() ?? DEFAULTS.summaryInstruction,
   });
   const saved = $("saved");
   saved.classList.add("show");

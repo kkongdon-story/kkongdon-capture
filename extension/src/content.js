@@ -42,7 +42,7 @@
     return out;
   }
 
-  function doCapture(format) {
+  function doCapture(format, subfolder) {
     notify("저장 중...", 999999);
     chrome.runtime.sendMessage(
       {
@@ -50,6 +50,7 @@
         pageUrl: location.href,
         relatedVideos: getRelatedVideos(),
         format: format || "md",
+        subfolder: subfolder || "",
       },
       (resp) => {
         if (chrome.runtime.lastError) { notify(`오류: ${chrome.runtime.lastError.message}`); return; }
@@ -100,7 +101,7 @@
   }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (msg?.type === "TRIGGER_CAPTURE") { doCapture(msg.format); sendResponse({ ok: true }); }
+    if (msg?.type === "TRIGGER_CAPTURE") { doCapture(msg.format, msg.subfolder); sendResponse({ ok: true }); }
     else if (msg?.type === "TRIGGER_FRAME") { doFrameCapture(); sendResponse({ ok: true }); }
     else if (msg?.type === "TOAST") { notify(msg.text || "", msg.durMs); sendResponse({ ok: true }); }
     else if (msg?.type === "GET_VIDEO_INFO") {

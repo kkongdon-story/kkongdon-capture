@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8" />
-  <title>kkongdon YouTube Script Capture</title>
+  <title>유튜브 스크립트 캡쳐</title>
   <style>
     :root {
       --primary: #2D6FF7; --primary-hover: #1F5BE5;
@@ -38,6 +38,18 @@
     .format-btn[data-fmt="pdf"]  .ic { background: var(--accent-pink); }
     .format-btn[data-fmt="csv"]  .ic { background: var(--accent-purple); }
     .format-btn.recent { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(45, 111, 247, 0.1); }
+    .web-btn.recent { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(45, 111, 247, 0.1); }
+    /* 웹 캡처 버튼 — format-btn과 동일한 스타일 */
+    .web-btn { display: flex; align-items: center; gap: 10px; width: 100%;
+               padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+               background: var(--bg); cursor: pointer; transition: all 0.15s;
+               font-family: inherit; font-size: 13px; color: var(--text); text-align: left; }
+    .web-btn:hover { border-color: var(--primary); background: var(--bg-soft); transform: translateY(-1px); }
+    .web-btn .ic { width: 28px; height: 28px; border-radius: 7px; flex-shrink: 0;
+                   display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 11px; }
+    .web-btn .label { flex: 1; }
+    .web-btn .label .name { font-weight: 600; }
+    .web-btn .label .desc { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
     .footer { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);
               display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--text-dim); }
     .kbd { display: inline-block; padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px;
@@ -49,6 +61,77 @@
     .status.warn { background: #FEF3C7; color: #92400E; }
     .status.err { background: #FEE2E2; color: #991B1B; }
     .hidden { display: none; }
+
+    /* ── 웹 캡처 모드 테마 (앰버/황금 계열) ────────────────────────────────── */
+    body.web-mode {
+      --primary: #B45309; --primary-hover: #92400E;
+      --bg: #FFFBEB; --bg-soft: #FEF3C7; --border: #FDE68A;
+      --text: #1C1917; --text-dim: #78716C;
+    }
+    body.web-mode .header { background: linear-gradient(135deg, #D97706 0%, #B45309 100%);
+      border-radius: 10px; padding: 8px 10px; margin: -2px -2px 12px; }
+    body.web-mode .header h1 { color: #fff; font-size: 14px; }
+    body.web-mode .header .icon-btn {
+      background: rgba(255,255,255,0.2); border-color: rgba(255,255,255,0.3); color: #fff; }
+    body.web-mode .header .icon-btn:hover { background: rgba(255,255,255,0.35); }
+    body.web-mode .header a.icon-btn { color: #fff; }
+    body.web-mode .mode-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 10px; font-weight: 700; color: rgba(255,255,255,0.9);
+      background: rgba(0,0,0,0.2); border-radius: 99px; padding: 2px 8px; }
+    body.web-mode .hint { color: #78716C; }
+    body.web-mode .web-btn:hover { border-color: var(--primary); background: var(--bg-soft); }
+    body.web-mode .status.ok { background: #FEF3C7; color: #92400E; }
+    body.web-mode .footer { border-top-color: #FDE68A; color: #78716C; }
+    body.web-mode .kbd { background: #FEF3C7; border-color: #FDE68A; color: #1C1917; }
+    body.web-mode a { color: #B45309; }
+    body.web-mode .next-steps { background: #FFFBEB; border-color: #FDE68A; }
+    body.web-mode .next-steps .ns-title { color: #B45309; }
+
+    /* ── 히스토리 패널 ─────────────────────────────────────────────────── */
+    .history-toggle { margin-top: 10px; padding: 6px 10px; border-radius: 8px;
+                      background: var(--bg-soft); border: 1px solid var(--border);
+                      font-size: 11px; color: var(--text-dim); cursor: pointer;
+                      display: flex; justify-content: space-between; align-items: center; }
+    .history-toggle:hover { background: var(--border); }
+    .history-panel { margin-top: 4px; border: 1px solid var(--border); border-radius: 8px;
+                     overflow: hidden; }
+    .h-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+               cursor: pointer; border-bottom: 1px solid var(--border); font-size: 12px; }
+    .h-item:last-child { border-bottom: none; }
+    .h-item:hover { background: var(--bg-soft); }
+    .h-type { flex-shrink: 0; font-size: 13px; }
+    .h-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                color: var(--text); }
+    .h-meta { flex-shrink: 0; font-size: 10px; color: var(--text-dim); }
+    .h-empty { padding: 10px; font-size: 12px; color: var(--text-dim); text-align: center; }
+
+    /* ── 하위 폴더 선택기 ─────────────────────────────────────────────── */
+    .subfolder-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .subfolder-row label { font-size: 11px; color: var(--text-dim); white-space: nowrap; flex-shrink: 0; }
+    .subfolder-select { flex: 1; font-family: inherit; font-size: 12px;
+                        padding: 5px 8px; border: 1px solid var(--border);
+                        border-radius: 8px; background: var(--bg-soft);
+                        color: var(--text); cursor: pointer; min-width: 0; }
+    .subfolder-select:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+    .wiki-badge { font-size: 9px; font-weight: 700; padding: 1px 5px;
+                  border-radius: 99px; background: #10B981; color: #fff;
+                  vertical-align: middle; margin-left: 4px; }
+
+    /* YouTube 모드 배지 */
+    .mode-badge { display: none; }
+    body.yt-mode .mode-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 10px; font-weight: 700; color: rgba(255,255,255,0.9);
+      background: rgba(255,0,0,0.75); border-radius: 99px; padding: 2px 8px;
+      margin-left: 6px; vertical-align: middle; }
+    body.yt-mode .header { background: linear-gradient(135deg, #1e3a8a 0%, #2D6FF7 100%);
+      border-radius: 10px; padding: 8px 10px; margin: -2px -2px 12px; }
+    body.yt-mode .header h1 { color: #fff; font-size: 14px; }
+    body.yt-mode .header .icon-btn {
+      background: rgba(255,255,255,0.2); border-color: rgba(255,255,255,0.3); color: #fff; }
+    body.yt-mode .header .icon-btn:hover { background: rgba(255,255,255,0.35); }
+    body.yt-mode .header a.icon-btn { color: #fff; }
     /* 다음 단계 안내 패널 */
     .next-steps { margin-top: 10px; padding: 10px 12px; border-radius: 10px;
                   background: #EFF6FF; border: 1px solid #BFDBFE; font-size: 12px; }
@@ -61,7 +144,7 @@
 </head>
 <body>
   <div class="header">
-    <h1>kkongdon YouTube Script Capture</h1>
+    <h1>유튜브 스크립트 캡쳐<span class="mode-badge" id="modeBadge"></span></h1>
     <div style="display:flex;gap:6px;align-items:center">
       <!-- Threads 링크 — @kkongdon_story -->
       <a id="threadsBtn" href="https://www.threads.com/@kkongdon_story" target="_blank" rel="noopener"
@@ -80,9 +163,19 @@
     </div>
   </div>
 
-  <p class="hint">현재 영상의 스크립트를 원하는 포맷으로 저장합니다.</p>
+  <p class="hint" id="hintText">현재 영상의 스크립트를 원하는 포맷으로 저장합니다.</p>
 
-  <div class="format-list">
+  <!-- 하위 폴더 선택기 (subfolders 설정 시 표시) -->
+  <div class="subfolder-row hidden" id="subfolderRow">
+    <label for="subfolderSelect">📂 저장 폴더</label>
+    <select class="subfolder-select" id="subfolderSelect">
+      <option value="">루트 (기본)</option>
+    </select>
+    <span class="wiki-badge hidden" id="wikiBadge">Wiki</span>
+  </div>
+
+  <!-- YouTube 전용: 포맷 선택 (JS로 컨텍스트 감지 후 표시) -->
+  <div class="format-list hidden" id="ytFormatList">
     <button class="format-btn" data-fmt="md">
       <span class="ic">MD</span>
       <span class="label"><span class="name">Markdown</span><span class="desc">Obsidian/노션 호환 — 기본</span></span>
@@ -105,6 +198,22 @@
     </button>
   </div>
 
+  <!-- 웹 캡처 전용: 포맷 선택 (비-YouTube 페이지) -->
+  <div class="format-list hidden" id="webCaptureList">
+    <button class="web-btn" data-fmt="md">
+      <span class="ic" style="background:var(--accent-green)">MD</span>
+      <span class="label"><span class="name">Markdown</span><span class="desc">본문 + AI 요약 — Obsidian/노션 호환</span></span>
+    </button>
+    <button class="web-btn" data-fmt="txt">
+      <span class="ic" style="background:var(--text-dim)">TXT</span>
+      <span class="label"><span class="name">일반 텍스트</span><span class="desc">마크다운 마커 없는 평문</span></span>
+    </button>
+    <button class="web-btn" data-fmt="html">
+      <span class="ic" style="background:var(--accent-orange)">HTML</span>
+      <span class="label"><span class="name">HTML 페이지</span><span class="desc">웹브라우저에서 열어 보기</span></span>
+    </button>
+  </div>
+
   <div id="status" class="status hidden"></div>
 
   <!-- 캡처 성공 후 다음 단계 안내 (기본 숨김) -->
@@ -123,6 +232,12 @@
       <span class="ns-text">CSV 포맷으로 다시 저장하면 <strong>Excel</strong>에서 키워드 검색·분석 가능</span>
     </div>
   </div>
+
+  <!-- 캡처 히스토리 패널 -->
+  <div class="history-toggle" id="historyToggle">
+    <span>최근 캡처</span><span id="historyArrow">▾</span>
+  </div>
+  <div class="history-panel hidden" id="historyPanel"></div>
 
   <div class="footer">
     <span>단축키: <span class="kbd" id="kbd">Ctrl+Shift+S</span></span>

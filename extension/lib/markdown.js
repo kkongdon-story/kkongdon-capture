@@ -3,16 +3,23 @@
 import { formatTimestamp } from "./youtube.js";
 import { MD_CONFIG } from "./config.js";
 
-export function buildMarkdown({ meta, captions, captionLang, aiSummary, relatedVideos, sttUsed, frames }) {
+export function buildMarkdown({ meta, captions, captionLang, aiSummary, relatedVideos, sttUsed, frames, translatedCaptions }) {
   const S = MD_CONFIG.SECTIONS;
   const fm = buildFrontmatter({ meta, captionLang, sttUsed });
   const header = buildHeader(meta);
   const desc = meta.description?.trim() ? `## ${S.DESCRIPTION}\n${meta.description.trim()}\n` : "";
   const transcript = buildTranscript(captions, sttUsed);
+  // 번역 섹션 — polishAndTranslate 결과가 있을 때만 포함
+  const translation = translatedCaptions?.length
+    ? `\n## 번역 (${captionLang} → ko)\n\n` + translatedCaptions.map((c) => {
+        const ts = formatTimestamp(c.startMs / 1000);
+        return `[${ts}] ${c.text}`;
+      }).join("\n\n") + "\n"
+    : "";
   const ai = aiSummary ? `\n## ${S.SUMMARY} (${aiSummary.provider})\n${cleanAiSummary(aiSummary.text)}\n` : "";
   const framesSec = buildFrames(frames);
   const related = buildRelated(relatedVideos);
-  return [fm, header, desc, transcript, ai, framesSec, related].filter(Boolean).join("\n");
+  return [fm, header, desc, transcript, translation, ai, framesSec, related].filter(Boolean).join("\n");
 }
 
 function buildFrames(frames) {
@@ -179,4 +186,84 @@ export function buildFilename({ meta, pattern }) {
   // 경로 구분자만 살리고 각 세그먼트는 안전화
   const parts = out.split("/").map((p) => safeFilename(p));
   return `YouTube-Capture/${parts.join("/")}.md`;
+}
+
+// ── 웹 페이지 캡쳐 마크다운 ──────────────────────────────────────────────────
+// YouTube와 달리 타임스탬프 세그먼트 없음. frontmatter는 source: "web" 고정.
+
+export function buildWebMarkdown({ title, url, date, author, bodyText, aiSummary }) {
+  const captured = new Date().toISOString();
+  const fm = [
+    "---",
+    `title: ${yamlString(title)}`,
+    `url: ${yamlString(url)}`,
+    `date: ${yamlString(date || "")}`,
+    `author: ${yamlString(author || "")}`,
+    `captured: ${yamlString(captured)}`,
+    `source: "web"`,
+    "---",
+    "",
+  ].join("\n");
+
+  const datePart = date ? ` | **날짜**: ${date}` : "";
+  const authorPart = author ? ` | **저자**: ${author}` : "";
+  const header = [
+    `# ${title || "제목 없음"}`,
+    "",
+    `**출처**: ${url}${datePart}${authorPart}`,
+    "",
+  ].join("\n");
+
+  const body = `## 본문\n\n${bodyText || "(본문 없음)"}\n`;
+
+  const ai = aiSummary?.text
+    ? `\n## AI 요약 (${aiSummary.provider})\n\n${cleanWebSummary(aiSummary.text)}\n`
+    : "";
+
+  return [fm, header, body, ai].filter(Boolean).join("\n");
+}
+
+function cleanWebSummary(text) {
+  return String(text || "")
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
+    .replace(/```[a-zA-Z]*\n?/g, "")
+    .replace(/[^\n]*\bPID[ \t]*\d+[^\n]*/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+export function buildWebFilename({ title }) {
+  const date = new Date().toISOString().slice(0, 10);
+  const safe = safeFilename(title || "web-capture", 80);
+  return `Web-Capture/${date}_${safe}.md`;
+}
+
+// 선택 텍스트 캡처용 Markdown 생성
+export function buildSelectionMarkdown({ title, url, selectionText, date }) {
+  const captured = new Date().toISOString();
+  const safeTitle = String(title || url || "").replace(/"/g, "'");
+  return [
+    `---`,
+    `title: "${safeTitle}"`,
+    `source: ${url}`,
+    `date: ${date || captured.slice(0, 10)}`,
+    `captured: ${captured}`,
+    `type: selection`,
+    `---`,
+    ``,
+    `# ${title || url}`,
+    ``,
+    `> 출처: [${title || url}](${url})`,
+    ``,
+    `## 선택한 내용`,
+    ``,
+    String(selectionText || "").trim(),
+    ``,
+  ].join("\n");
+}
+
+export function buildSelectionFilename({ title }) {
+  const date = new Date().toISOString().slice(0, 10);
+  const safe = safeFilename(title || "selection", 60);
+  return `Selection/${date}_${safe}.md`;
 }

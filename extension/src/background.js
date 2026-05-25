@@ -6,9 +6,12 @@ import {
   pickPreferredTrack,
   fetchCaptions,
 } from "../lib/youtube.js";
-import { buildMarkdown, buildFilename, safeFilename } from "../lib/markdown.js";
+import { buildMarkdown, buildFilename, safeFilename, buildWebMarkdown, buildWebFilename, buildSelectionMarkdown, buildSelectionFilename } from "../lib/markdown.js";
 import { generateOutput, FORMAT_INFO } from "../lib/formatters.js";
-import { summarize, classify, transcribeAudio, checkHelperHealth, polishTranscript, runPythonHook } from "../lib/aiBridge.js";
+import { summarize, classify, transcribeAudio, checkHelperHealth, polishTranscript, polishAndTranslate, runPythonHook, summarizeWeb, writeObsidianFile, extractEntities } from "../lib/aiBridge.js";
+import { buildWikiYouTubeMarkdown, buildWikiWebMarkdown } from "../lib/wikiFormatter.js";
+import { captureWebPage } from "../lib/webCapture.js";
+import { sendToNotion } from "../lib/notionSync.js";
 import { SETTING_DEFAULTS, AI_CONFIG } from "../lib/config.js";
 import { cleanupSegments } from "../lib/transcriptCleanup.js";
 
@@ -18,6 +21,32 @@ const runInTab = (...args) => chrome.scripting["executeScript"](...args);
 const DEFAULTS = SETTING_DEFAULTS;
 
 let lastCapture = null;
+
+// ── 하위 폴더 경로 적용 ────────────────────────────────────────────────────
+// filename: "YouTube-Capture/channel/date_title.md" 형태
+// subfolder: "개발" → "YouTube-Capture/개발/channel/date_title.md"
+function applySubfolderToFilename(filename, subfolder) {
+  if (!subfolder) return filename;
+  const safe = subfolder.replace(/[<>:"|?*\\]/g, "_").trim();
+  if (!safe) return filename;
+  // 첫 번째 슬래시 위치 → 그 뒤에 subfolder 삽입
+  const slashIdx = filename.indexOf("/");
+  if (slashIdx === -1) return `${safe}/${filename}`;
+  return `${filename.slice(0, slashIdx + 1)}${safe}/${filename.slice(slashIdx + 1)}`;
+}
+
+// [P1.1] polishAndTranslate 응답 파싱 — <POLISHED>...</POLISHED><TRANSLATION>...</TRANSLATION>
+function parsePolishTranslateResult(text) {
+  const p = (text || "").match(/<POLISHED>([\s\S]*?)<\/POLISHED>/i);
+  const t = (text || "").match(/<TRANSLATION>([\s\S]*?)<\/TRANSLATION>/i);
+  return {
+    polished:     p ? p[1].trim() : text || null,  // 태그 없으면 전체를 polish로 간주
+    translation:  t ? t[1].trim() : null,
+  };
+}
+
+// [P1.1] 번역 유효성 검사 — [MM:SS] 타임스탬프 패턴 존재 여부
+const hasTimestamps = (s) => /\[\d{1,2}:\d{2}/.test(s || "");
 
 async function getSettings() {
   const keys = [...Object.keys(DEFAULTS), "_sv"];
@@ -36,8 +65,33 @@ function isPremium(_licenseKey) {
   return false;
 }
 
+// ── 선택 텍스트 캡처 — 컨텍스트 메뉴 (최상위 필수: SW 재시작 후에도 유지)
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === "capture-selection" && tab?.id && info.selectionText) {
+    handleSelectionCapture(info.selectionText.trim(), tab).catch((e) =>
+      notifyTab(tab.id, `선택 캡처 실패: ${e.message}`, 6000)
+    );
+  }
+});
+
 chrome.commands.onCommand.addListener(async (command) => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+  // 웹 캡쳐 — YouTube 외 모든 페이지에서 동작
+  if (command === "capture-web") {
+    const url = tab?.url || "";
+    if (!tab?.id || !url || url.startsWith("chrome://") || url.startsWith("chrome-extension://")) {
+      await notifyTab(tab?.id, "이 페이지는 캡쳐할 수 없습니다.");
+      return;
+    }
+    // content.js 주입 (토스트 표시용)
+    try { await chrome.tabs.sendMessage(tab.id, { type: "__PING__" }); }
+    catch { try { await runInTab({ target: { tabId: tab.id }, files: ["src/content.js"] }); } catch {} }
+    handleWebCapture(tab.id, url).catch((e) => notifyTab(tab.id, `웹 캡쳐 실패: ${e.message}`));
+    return;
+  }
+
+  // YouTube 전용 커맨드
   if (!tab?.url || !/^https:\/\/www\.youtube\.com\/watch/.test(tab.url)) {
     await notifyTab(tab?.id, "유튜브 영상 페이지에서만 동작합니다.");
     return;
@@ -60,12 +114,205 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch((e) => sendResponse({ ok: false, error: e.message || String(e) }));
     return true;
   }
+  if (msg?.type === "CAPTURE_WEB") {
+    // tabId: popup 경로에서는 msg.tabId로 전달 (sender.tab이 없음)
+    // content 경로에서는 sender.tab.id 사용
+    const tabId = msg.tabId || sender?.tab?.id;
+    const url = msg.url || sender?.tab?.url || "";
+    handleWebCapture(tabId, url, msg.format, msg.subfolder || "").then((r) => sendResponse(r))
+      .catch((e) => sendResponse({ ok: false, error: e.message || String(e) }));
+    return true;
+  }
   if (msg?.type === "HEALTH_CHECK") {
     checkHelperHealth().then((r) => sendResponse({ ok: true, result: r }))
       .catch((e) => sendResponse({ ok: false, error: e.message }));
     return true;
   }
 });
+
+// ── 웹 페이지 캡쳐 ──────────────────────────────────────────────────────────
+async function handleWebCapture(tabId, url, format = "md", subfolder = "") {
+  // content.js 주입 (토스트 표시용) — 팝업·단축키 양쪽 경로에서 보장
+  try { await chrome.tabs.sendMessage(tabId, { type: "__PING__" }); }
+  catch { try { await runInTab({ target: { tabId }, files: ["src/content.js"] }); } catch {} }
+
+  const settings = await getSettings();
+  await notifyTab(tabId, "웹 페이지 본문 추출 중...");
+
+  let data;
+  try {
+    data = await captureWebPage(tabId, url);
+  } catch (e) {
+    await notifyTab(tabId, `본문 추출 실패: ${e.message}`, 8000);
+    throw e;
+  }
+
+  // 본문이 완전히 비어있을 때만 차단 (짧은 경우는 captureWebPage에서 경고 텍스트를 붙여 반환)
+  if (!data?.bodyText) {
+    await notifyTab(tabId, "본문을 추출하지 못했습니다. 페이지를 새로고침 후 다시 시도해 보세요.", 8000);
+    return { ok: false, error: "본문 없음" };
+  }
+
+  await notifyTab(tabId, `본문 ${data.bodyText.length}자 추출 완료`);
+
+  // AI 요약 (설정 enableSummary + aiProvider !== "none" 시 실행)
+  let aiSummary = null;
+  if (settings.enableSummary && settings.aiProvider !== "none") {
+    const stop = startHeartbeat(tabId, `AI 요약 중 (${settings.aiProvider})`);
+    try {
+      const MAX_WEB_CHARS = 8000;
+      const bodyForSummary = data.bodyText.length > MAX_WEB_CHARS
+        ? data.bodyText.slice(0, MAX_WEB_CHARS)
+        : data.bodyText;
+      const res = await summarizeWeb({
+        provider: settings.aiProvider,
+        bodyText: bodyForSummary,
+        title: data.title,
+        ollamaModel: settings.ollamaModel,
+        claudeModel: settings.claudeModel,
+        instruction: settings.summaryInstruction || "",
+      });
+      aiSummary = { provider: settings.aiProvider, text: res.text };
+      const sec = stop();
+      await notifyTab(tabId, `요약 완료 (${sec}s)`, 4000);
+    } catch (e) {
+      stop();
+      await notifyTab(tabId, `AI 요약 실패 (본문만 저장): ${e.message}`, 6000);
+    }
+  }
+
+  await notifyTab(tabId, "저장 중...");
+
+  // 엔티티 추출 (wiki 서식 + AI 활성 시)
+  let entities = null;
+  if (settings.enableWikiFormat && settings.aiProvider !== "none") {
+    const stop = startHeartbeat(tabId, "엔티티 추출 중");
+    entities = await extractEntities({
+      provider: settings.aiProvider,
+      text: data.bodyText,
+      title: data.title,
+      ollamaModel: settings.ollamaModel,
+      claudeModel: settings.claudeModel,
+    });
+    stop();
+  }
+
+  // Wiki 서식 또는 기본 MD 선택
+  const md = (settings.enableWikiFormat)
+    ? buildWikiWebMarkdown({ ...data, aiSummary, entities })
+    : buildWebMarkdown({ ...data, aiSummary });
+
+  const baseFilename = applySubfolderToFilename(
+    buildWebFilename({ title: data.title }),
+    subfolder
+  );
+
+  // 포맷별 출력 생성
+  const fmt = (["md", "txt", "html"].includes(format)) ? format : "md";
+  let output, mime, ext;
+  if (fmt === "txt") {
+    // MD에서 마커 제거
+    output = md
+      .replace(/^---[\s\S]*?---\n/m, "")     // frontmatter 제거
+      .replace(/^#{1,6}\s+/gm, "")           // 헤더 마커 제거
+      .replace(/\*\*([^*]+)\*\*/g, "$1")     // 볼드 제거
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // 링크 → 텍스트
+      .replace(/`([^`]+)`/g, "$1")           // 인라인 코드 제거
+      .trim();
+    mime = "text/plain"; ext = "txt";
+  } else if (fmt === "html") {
+    // 페이지 출처 문자열은 반드시 이스케이프 — XSS 방지
+    const esc = (s = "") => String(s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    // href는 http/https만 허용 (javascript: 차단)
+    const safeHref = (u = "") => /^https?:\/\//.test(u) ? u : "#";
+
+    const bodyParas = (data.bodyText || "")
+      .split(/\n\n+/)
+      .map((p) => `<p>${esc(p.replace(/\n/g, " ").trim())}</p>`)
+      .join("\n");
+
+    const summaryHtml = aiSummary
+      ? `<h2>AI 요약 (${esc(aiSummary.provider)})</h2>\n` +
+        aiSummary.text.split("\n").map((l) => `<p>${esc(l)}</p>`).join("\n")
+      : "";
+
+    output = `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
+<title>${esc(data.title)}</title>
+<style>body{font-family:-apple-system,sans-serif;max-width:800px;margin:2rem auto;padding:0 1rem;line-height:1.7}h1,h2,h3{color:#1F2937}a{color:#2D6FF7}</style>
+</head><body>
+<h1>${esc(data.title)}</h1>
+<p><strong>출처:</strong> <a href="${safeHref(data.url)}">${esc(data.url)}</a>${data.date ? ` | <strong>날짜:</strong> ${esc(data.date)}` : ""}${data.author ? ` | <strong>저자:</strong> ${esc(data.author)}` : ""}</p>
+<h2>본문</h2>
+${bodyParas}
+${summaryHtml}
+</body></html>`;
+    mime = "text/html"; ext = "html";
+  } else {
+    output = md;
+    mime = "text/markdown"; ext = "md";
+  }
+
+  const filename = baseFilename.replace(/\.md$/, `.${ext}`);
+
+  // Notion 동기화 — downloads.download 이전에 await (SW 수명 보호, Critic 지적 반영)
+  // MD 포맷이 아닐 때 연동 활성화 시 안내
+  if ((settings.enableNotion || settings.enableObsidian) && ext !== "md") {
+    await notifyTab(tabId, "💡 Notion/Obsidian 연동은 MD 포맷에서만 동작합니다.", 4000);
+  }
+  console.log("[Notion] 설정 확인:", {
+    enableNotion: settings.enableNotion,
+    hasApiKey: !!settings.notionApiKey,
+    hasPageId: !!settings.notionPageId,
+    ext,
+  });
+  if (settings.enableNotion && settings.notionApiKey && settings.notionPageId && ext === "md") {
+    const stopNotion = startHeartbeat(tabId, "Notion 전송 중");
+    try {
+      console.log("[Notion] API 호출 시작:", data.title);
+      const notionRes = await sendToNotion({ apiKey: settings.notionApiKey, pageId: settings.notionPageId,
+                           title: data.title, mdContent: md });
+      stopNotion();
+      console.log("[Notion] 전송 성공:", notionRes?.id);
+      await notifyTab(tabId, "Notion 전송 완료 ✓");
+    } catch (e) {
+      stopNotion();
+      console.error("[Notion] 전송 실패:", e.message);
+      await notifyTab(tabId, `Notion 전송 실패 (로컬 저장은 완료): ${e.message}`, 5000);
+    }
+  }
+
+  const dataUrl = `data:${mime};charset=utf-8,` + encodeURIComponent(output);
+  const downloadId = await chrome.downloads.download({
+    url: dataUrl, filename, conflictAction: "uniquify", saveAs: false,
+  });
+  saveToHistory({ title: data.title, url: data.url, filename, format: ext, type: "web" });
+
+  // Obsidian vault 동기화 (enableObsidian=true + 헬퍼 필요)
+  if (settings.enableObsidian && settings.obsidianVaultPath && ext === "md") {
+    const obsDir = subfolder ? `MD Capture/${subfolder}` : "MD Capture";
+    const obsPath = `${settings.obsidianVaultPath.replace(/[\\/]$/, "")}/${obsDir}/${filename.replace(/^.*[\\/]/, "")}`;
+    const stopObs = startHeartbeat(tabId, "Obsidian 저장 중");
+    try {
+      await writeObsidianFile({ path: obsPath, content: output });
+      stopObs();
+      await notifyTab(tabId, "Obsidian 저장 완료 ✓");
+    } catch (e) {
+      stopObs();
+      await notifyTab(tabId, `Obsidian 저장 실패 (로컬 저장은 완료): ${e.message}`, 5000);
+    }
+  }
+
+  const _webToastLine = extractToastLine(aiSummary?.text);
+  await chrome.notifications.create({
+    type: "basic", iconUrl: chrome.runtime.getURL("icons/128.png"),
+    title: "유튜브 스크립트 캡쳐",
+    message: _webToastLine ? `📝 ${_webToastLine}` : `웹 캡쳐 저장됨 (${ext.toUpperCase()}): ${filename}`,
+  }).catch(() => {});
+
+  return { ok: true, filename, downloadId };
+}
 
 // content script를 통해 URL을 fetch (페이지 쿠키 사용 — SW에서는 YouTube 쿠키 없음)
 async function fetchViaContent(tabId, url) {
@@ -529,42 +776,115 @@ async function handleCapture(msg, sender) {
     } catch (e) { await notifyTab(tabId, `Python hook 실패 (원본 유지): ${e.message}`); }
   }
 
-  // [3] AI 대본 정리 (polish) — 병렬 청크로 속도 최적화
-  // 원리: callHelper는 호출마다 독립 포트(별도 helper 호출) → Promise.all로 Codex/Ollama 프로세스 병렬 실행
-  // 예: 9,000자 단일 → 120s  /  3,000자 청크 3개 병렬 → ~35s
+  // [3] AI 대본 정리 (polish) + 필요 시 번역 (polishAndTranslate 통합 호출)
+  // - 동일 언어: polishTranscript()만 — 청크 병렬
+  // - 다른 언어: polishAndTranslate() — 한 번의 LLM 호출로 정리+번역 동시 수행 (토큰 ~50% 절감)
   const wantPolish = settings.aiProvider !== "none" && settings.enablePolish !== false && captions.length;
-  console.log("[YTC] AI 조건:", { wantPolish, provider: settings.aiProvider, captionLang });
+  const targetLang  = settings.summaryLanguage || "ko";
+  const srcBase     = (captionLang || "").toLowerCase().split(/[-_]/)[0];
+  const tgtBase     = targetLang.toLowerCase().split(/[-_]/)[0];
+  const wantTranslation = wantPolish && srcBase !== tgtBase;
+  console.log("[YTC] AI 조건:", { wantPolish, wantTranslation, provider: settings.aiProvider, captionLang, targetLang });
+
+  let translatedCaptions = null;
 
   if (wantPolish) {
     const chunks = splitCaptionChunks(captions, AI_CONFIG.POLISH_CHUNK_CHARS, AI_CONFIG.POLISH_MAX_PARALLEL);
     const label = chunks.length > 1
-      ? `AI 대본 정리 중 (${settings.aiProvider}, ${chunks.length}청크 병렬)`
-      : `AI 대본 정리 중 (${settings.aiProvider})`;
+      ? `AI 대본 정리${wantTranslation ? "+번역" : ""} 중 (${settings.aiProvider}, ${chunks.length}청크 병렬)`
+      : `AI 대본 정리${wantTranslation ? "+번역" : ""} 중 (${settings.aiProvider})`;
     const stop = startHeartbeat(tabId, label);
     console.log("[YTC] polish 청크:", chunks.length, "개, 총 자막:", captions.length, "줄");
+
     try {
-      const results = await Promise.all(
-        chunks.map((chunk, i) => {
-          const transcriptText = buildParagraphedTranscript(chunk);
-          return polishTranscript({
-            provider: settings.aiProvider, transcriptText, meta, sourceLang: captionLang,
-            ollamaModel: settings.ollamaModel, claudeModel: settings.claudeModel,
+      if (wantTranslation) {
+        // ── polishAndTranslate 경로 (P1.2 통합 호출) ──────────────────────────
+        const results = await Promise.all(
+          chunks.map((chunk, i) => {
+            const transcriptText = buildParagraphedTranscript(chunk);
+
+            // [P1.1] 재시도 포함 호출 — 번역에 타임스탬프 없으면 1회 재시도
+            const doCall = async (isRetry = false) => {
+              const res = await polishAndTranslate({
+                provider: settings.aiProvider, transcriptText, meta,
+                sourceLang: captionLang, targetLang,
+                ollamaModel: settings.ollamaModel, claudeModel: settings.claudeModel,
+              });
+              // [P1.1] 응답 크기 가드: 입력 대비 80% 미만 + 3000자 미만이면 잘림 의심
+              const inLen = transcriptText.length, outLen = (res.text || "").length;
+              if (outLen < 3000 && outLen < inLen * 0.8) {
+                console.warn(`[YTC] 청크${i + 1} 크기 의심: 입력 ${inLen}자 → 출력 ${outLen}자 (잘림 가능)`);
+              }
+              // [P1.1] 각 단계 응답 앞 200자 로그
+              console.log(`[YTC] 청크${i + 1} 응답 앞 200자:`, (res.text || "").slice(0, 200).replace(/\n/g, " "));
+
+              const { polished, translation } = parsePolishTranslateResult(res.text);
+
+              // [P1.1] 번역 검증: [MM:SS] 없으면 강화 프롬프트로 1회 재시도
+              if (!isRetry && translation !== null && !hasTimestamps(translation)) {
+                console.warn(`[YTC] 청크${i + 1} 번역 타임스탬프 없음 — 강화 프롬프트로 재시도`);
+                return doCall(true);
+              }
+              return { polished, translation };
+            };
+
+            return doCall()
+              .then(({ polished, translation }) => {
+                const parsedPolished    = parsePolishedTranscript(polished);
+                const parsedTranslation = parsePolishedTranscript(translation);
+                console.log(`[YTC] 청크${i + 1} polish: ${parsedPolished?.length || 0}줄, 번역: ${parsedTranslation?.length || 0}줄`);
+                return {
+                  polished:    parsedPolished?.length    ? parsedPolished    : chunk,
+                  translated:  parsedTranslation?.length ? parsedTranslation : null,
+                };
+              })
+              .catch((e) => {
+                console.warn(`[YTC] 청크${i + 1} polishAndTranslate 실패, 원본 유지:`, e.message);
+                return { polished: chunk, translated: null };
+              });
           })
-            .then((res) => {
-              const p = parsePolishedTranscript(res.text);
-              console.log(`[YTC] 청크${i + 1} polish 완료:`, p?.length || 0, "줄");
-              return p?.length ? p : chunk;  // 파싱 실패 시 원본 청크 유지
+        );
+
+        const mergedPolished  = results.flatMap((r) => r.polished);
+        const translatedParts = results.map((r) => r.translated);
+        if (mergedPolished.length) captions = mergedPolished;
+
+        if (translatedParts.every(Boolean)) {
+          translatedCaptions = translatedParts.flat();
+        } else {
+          const failCount = translatedParts.filter((t) => !t).length;
+          console.warn(`[YTC] 번역 실패 청크: ${failCount}/${chunks.length}`);
+        }
+
+        const sec     = stop();
+        const failNote = translatedCaptions ? "" : " ⚠️ 번역 실패";
+        await notifyTab(tabId, `대본 정리+번역 완료 (${sec}s${chunks.length > 1 ? `, ${chunks.length}청크 병렬` : ""}${failNote})`, 2000);
+
+      } else {
+        // ── polish only 경로 (동일 언어) ─────────────────────────────────────
+        const results = await Promise.all(
+          chunks.map((chunk, i) => {
+            const transcriptText = buildParagraphedTranscript(chunk);
+            return polishTranscript({
+              provider: settings.aiProvider, transcriptText, meta, sourceLang: captionLang,
+              ollamaModel: settings.ollamaModel, claudeModel: settings.claudeModel,
             })
-            .catch((e) => {
-              console.warn(`[YTC] 청크${i + 1} polish 실패, 원본 유지:`, e.message);
-              return chunk;
-            });
-        })
-      );
-      const merged = results.flat();
-      if (merged.length) captions = merged;
-      const sec = stop();
-      await notifyTab(tabId, `대본 정리 완료 (${sec}s${chunks.length > 1 ? `, ${chunks.length}청크 병렬` : ""})`, 2000);
+              .then((res) => {
+                const p = parsePolishedTranscript(res.text);
+                console.log(`[YTC] 청크${i + 1} polish 완료:`, p?.length || 0, "줄");
+                return p?.length ? p : chunk;
+              })
+              .catch((e) => {
+                console.warn(`[YTC] 청크${i + 1} polish 실패, 원본 유지:`, e.message);
+                return chunk;
+              });
+          })
+        );
+        const merged = results.flat();
+        if (merged.length) captions = merged;
+        const sec = stop();
+        await notifyTab(tabId, `대본 정리 완료 (${sec}s${chunks.length > 1 ? `, ${chunks.length}청크 병렬` : ""})`, 2000);
+      }
     } catch (e) {
       stop();
       console.error("[YTC] polish 실패:", e.message);
@@ -584,7 +904,7 @@ async function handleCapture(msg, sender) {
         captionsText = captionsText.slice(0, MAX_SUMMARIZE);
         console.warn("[YTC] 요약 입력 자름:", MAX_SUMMARIZE, "자");
       }
-      const res = await summarize({ provider: settings.aiProvider, captionsText, meta, language: settings.summaryLanguage, ollamaModel: settings.ollamaModel, claudeModel: settings.claudeModel });
+      const res = await summarize({ provider: settings.aiProvider, captionsText, meta, language: settings.summaryLanguage, ollamaModel: settings.ollamaModel, claudeModel: settings.claudeModel, instruction: settings.summaryInstruction || "" });
       aiSummary = { provider: settings.aiProvider, text: res.text };
       const sec = stop();
       await notifyTab(tabId, `요약 완료 (${sec}s)`, 4000);
@@ -608,14 +928,40 @@ async function handleCapture(msg, sender) {
   console.log("[YTC] 처리 완료 — polish:", wantPolish, ", captions:", captions.length, "줄");
 
   await notifyTab(tabId, "저장 중...");
+
+  // 엔티티 추출 (wiki 서식 + AI 활성 시) — captions가 polish된 상태에서 수행
+  let entities = null;
+  if (settings.enableWikiFormat && settings.aiProvider !== "none" && captions.length) {
+    const captionsText = captions.map((c) => c.text).join("\n").slice(0, 4000);
+    const stopEnt = startHeartbeat(tabId, "엔티티 추출 중");
+    entities = await extractEntities({
+      provider: settings.aiProvider,
+      text: captionsText,
+      title: meta.title,
+      ollamaModel: settings.ollamaModel,
+      claudeModel: settings.claudeModel,
+    });
+    stopEnt();
+  }
+
   const captureData = {
     meta, captions, captionLang, aiSummary,
+    translatedCaptions,   // null이면 번역 없음 / 동일 언어
     relatedVideos: includeRelated, sttUsed, frames: [],
   };
   const format = (msg.format && FORMAT_INFO[msg.format]) ? msg.format : "md";
   const info = FORMAT_INFO[format];
-  const output = generateOutput(format, captureData);
-  const baseFilename = buildFilename({ meta, pattern }).replace(/\.md$/, `.${info.ext}`);
+
+  // Wiki 서식이 켜진 경우 MD는 wiki 포맷으로 빌드
+  const output = (settings.enableWikiFormat && format === "md")
+    ? buildWikiYouTubeMarkdown({ meta, captions, captionLang, aiSummary, entities, translatedCaptions })
+    : generateOutput(format, captureData);
+
+  const subfolder = msg.subfolder || "";
+  const baseFilename = applySubfolderToFilename(
+    buildFilename({ meta, pattern }).replace(/\.md$/, `.${info.ext}`),
+    subfolder
+  );
 
   // PDF는 새 탭에서 열어 사용자가 Ctrl+P → PDF로 저장
   let downloadId;
@@ -631,14 +977,56 @@ async function handleCapture(msg, sender) {
     });
   }
 
+  if (downloadId) {
+    saveToHistory({
+      title: meta.title,
+      url: `https://www.youtube.com/watch?v=${meta.videoId}`,
+      filename, format, type: "yt",
+    });
+  }
+
+  // Notion 동기화 (MD 포맷 + 연동 설정 시)
+  if (settings.enableNotion && settings.notionApiKey && settings.notionPageId && format === "md") {
+    const stopNotion = startHeartbeat(tabId, "Notion 전송 중");
+    try {
+      const notionRes = await sendToNotion({
+        apiKey: settings.notionApiKey, pageId: settings.notionPageId,
+        title: meta.title, mdContent: output,
+      });
+      stopNotion();
+      console.log("[Notion] YT 전송 성공:", notionRes?.id);
+      await notifyTab(tabId, "Notion 전송 완료 ✓");
+    } catch (e) {
+      stopNotion();
+      console.error("[Notion] YT 전송 실패:", e.message);
+      await notifyTab(tabId, `Notion 전송 실패 (로컬 저장 완료): ${e.message}`, 5000);
+    }
+  }
+
+  // Obsidian vault 동기화 (MD 포맷 + 연동 설정 시)
+  if (settings.enableObsidian && settings.obsidianVaultPath && format === "md") {
+    const obsDir = subfolder ? `MD Capture/${subfolder}` : "MD Capture";
+    const obsPath = `${settings.obsidianVaultPath.replace(/[\\/]$/, "")}/${obsDir}/${filename.replace(/^.*[\\/]/, "")}`;
+    const stopObs = startHeartbeat(tabId, "Obsidian 저장 중");
+    try {
+      await writeObsidianFile({ path: obsPath, content: output });
+      stopObs();
+      await notifyTab(tabId, "Obsidian 저장 완료 ✓");
+    } catch (e) {
+      stopObs();
+      await notifyTab(tabId, `Obsidian 저장 실패 (로컬 저장 완료): ${e.message}`, 5000);
+    }
+  }
+
   // MD 내용은 프레임 첨부용으로 항상 보관 (lastCapture가 MD 기반)
   const mdContent = format === "md" ? output : buildMarkdown(captureData);
   lastCapture = { downloadId, filename, mdContent, meta, frames: [] };
 
+  const _ytToastLine = extractToastLine(aiSummary?.text);
   await chrome.notifications.create({
     type: "basic", iconUrl: chrome.runtime.getURL("icons/128.png"),
     title: "유튜브 스크립트 캡쳐",
-    message: `저장됨 (${info.label}): ${filename}${premium ? " (프리미엄)" : ""}`,
+    message: _ytToastLine ? `📝 ${_ytToastLine}` : `저장됨 (${info.label}): ${filename}${premium ? " (프리미엄)" : ""}`,
   }).catch(() => {});
 
   return { ok: true, filename, downloadId, captionLang, sttUsed, premium, format };
@@ -754,6 +1142,36 @@ function parsePolishedTranscript(text) {
   return out.length ? out : null;
 }
 
+// 캡처 히스토리 저장 (최대 10개 FIFO)
+const HISTORY_KEY = "captureHistory";
+const HISTORY_MAX = 10;
+async function saveToHistory({ title, url, filename, format, type }) {
+  try {
+    const date = new Date().toISOString().slice(0, 10);
+    const item = { title: String(title || url).slice(0, 60), url, filename, date, format, type };
+    const stored = await chrome.storage.local.get(HISTORY_KEY);
+    const prev = Array.isArray(stored[HISTORY_KEY]) ? stored[HISTORY_KEY] : [];
+    const next = [item, ...prev].slice(0, HISTORY_MAX);
+    await chrome.storage.local.set({ [HISTORY_KEY]: next });
+  } catch {}
+}
+
+// AI 요약 텍스트에서 토스트용 한 줄 추출
+// summarizeWeb 출력: "### 개요 / ### 핵심 포인트 / ### 한 줄 요약" 구조
+function extractToastLine(summaryText) {
+  if (!summaryText) return null;
+  const lines = summaryText.split("\n");
+  // "### 한 줄 요약" 섹션 다음 비어있지 않은 줄 우선 (summarizeWeb 전용)
+  const oneLineIdx = lines.findIndex(l => /한 줄 요약/.test(l));
+  if (oneLineIdx >= 0) {
+    const next = lines.slice(oneLineIdx + 1).find(l => l.trim().length > 5);
+    if (next) return next.trim().slice(0, 100);
+  }
+  // fallback: 첫 번째 비-헤더 실질 줄 (YT summarize 등)
+  const content = lines.find(l => l.trim().length > 10 && !l.startsWith("#"));
+  return content?.replace(/^[-*•]\s*/, "").slice(0, 100) || null;
+}
+
 async function notifyTab(tabId, text, durMs) {
   if (!tabId) return;
   try { await chrome.tabs.sendMessage(tabId, { type: "TOAST", text, durMs }); } catch {}
@@ -856,4 +1274,35 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
   if (reason === "install") {
     chrome.tabs.create({ url: chrome.runtime.getURL("src/options.html") }).catch(() => {});
   }
+  // 컨텍스트 메뉴 등록 (removeAll로 중복 방지)
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: "capture-selection",
+      title: "선택 텍스트를 MD로 저장",
+      contexts: ["selection"],
+    });
+  });
 });
+
+// 선택 텍스트 캡처 처리
+async function handleSelectionCapture(selectionText, tab) {
+  const date = new Date().toISOString().slice(0, 10);
+  const md = buildSelectionMarkdown({
+    title: tab.title || tab.url,
+    url: tab.url,
+    selectionText,
+    date,
+  });
+  const filename = buildSelectionFilename({ title: tab.title || tab.url });
+  const dataUrl = "data:text/markdown;charset=utf-8," + encodeURIComponent(md);
+  const downloadId = await chrome.downloads.download({
+    url: dataUrl, filename, conflictAction: "uniquify", saveAs: false,
+  });
+  saveToHistory({ title: tab.title || tab.url, url: tab.url, filename, format: "md", type: "selection" });
+  await chrome.notifications.create({
+    type: "basic", iconUrl: chrome.runtime.getURL("icons/128.png"),
+    title: "유튜브 스크립트 캡쳐",
+    message: `✏️ 선택 텍스트 저장됨: ${selectionText.slice(0, 60)}…`,
+  }).catch(() => {});
+  return downloadId;
+}

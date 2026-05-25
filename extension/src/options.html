@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8" />
-  <title>kkongdon YouTube Script Capture — 설정</title>
+  <title>유튜브 스크립트 캡쳐 — 설정</title>
   <link rel="stylesheet" href="options.css" />
 </head>
 <body>
@@ -10,7 +10,7 @@
   <div class="page-header">
     <div class="logo">📊</div>
     <div>
-      <h1>kkongdon YouTube Script Capture</h1>
+      <h1>유튜브 스크립트 캡쳐</h1>
       <div class="sub">설치 단계와 캡쳐 환경 설정. 변경 후 아래 <strong>설정 저장</strong> 클릭.
         &nbsp;·&nbsp; <a href="https://www.threads.com/@kkongdon_story" target="_blank" rel="noopener" style="font-size:12px">🧵 @kkongdon_story</a>
       </div>
@@ -64,7 +64,7 @@
     <div id="health" class="status" style="display:none; margin-top:14px"></div>
   </div>
 
-  <h1>kkongdon YouTube Script Capture 설정</h1>
+  <h1>유튜브 스크립트 캡쳐 설정</h1>
   <div class="sub">유튜브 영상 자막·메타데이터를 Markdown/CSV/HTML/TXT로 저장합니다. 설정 후 <strong>저장</strong>을 눌러주세요.</div>
 
   <!-- 저장 파일명 -->
@@ -216,6 +216,79 @@
       <div>
         <label style="font-weight:500; display:block; margin-bottom:4px">최대 녹음 시간 (초)</label>
         <input id="sttMaxSeconds" type="number" min="30" max="3600" placeholder="600" />
+      </div>
+    </div>
+  </div>
+
+  <!-- 연동 설정 (Obsidian / Notion) -->
+  <div class="section">
+    <h2>🔗 연동 설정</h2>
+    <p class="hint" style="margin:0 0 14px">캡처 즉시 Obsidian vault나 Notion 페이지에 자동 저장합니다.</p>
+
+    <div style="margin-bottom:16px">
+      <label class="checkbox" style="margin-bottom:8px">
+        <input type="checkbox" id="enableObsidian" /> Obsidian vault에 자동 저장 (헬퍼 필요)
+      </label>
+      <div style="margin-left:24px">
+        <label style="font-weight:500; display:block; margin-bottom:4px; font-size:13px">Vault 경로</label>
+        <input type="text" id="obsidianVaultPath"
+               placeholder="C:\Users\YourName\Documents\Obsidian\MyVault"
+               style="width:100%; box-sizing:border-box" />
+        <div class="hint" style="margin-top:4px">캡처 파일은 vault 내 MD Capture/ 폴더에 저장됩니다.</div>
+      </div>
+    </div>
+
+    <div style="margin-bottom:8px">
+      <label class="checkbox" style="margin-bottom:8px">
+        <input type="checkbox" id="enableNotion" /> Notion 페이지에 자동 저장
+      </label>
+      <div style="margin-left:24px">
+        <label style="font-weight:500; display:block; margin-bottom:4px; font-size:13px">API 키 (Integration Token)</label>
+        <input type="password" id="notionApiKey" placeholder="secret_..."
+               style="width:100%; box-sizing:border-box; margin-bottom:8px" />
+        <label style="font-weight:500; display:block; margin-bottom:4px; font-size:13px">대상 페이지 ID</label>
+        <input type="text" id="notionPageId" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+               style="width:100%; box-sizing:border-box" />
+        <div class="hint" style="margin-top:4px">Notion 페이지 URL에서 마지막 32자리 문자열.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Wiki 서식 설정 -->
+  <div class="section">
+    <h2>📝 Wiki 서식 (LLM-wiki화)</h2>
+    <p class="hint" style="margin:0 0 14px">
+      캡처 MD를 <strong>wiki-llm Source page 형식</strong>으로 저장합니다. 평문 메타데이터, 섹션 구조
+      (One-line Definition / Summary / Extracted Claims / Related Pages), <code>[[entities/slug]]</code>·<code>[[concepts/slug]]</code>
+      타입 wikilink가 생성되어 Obsidian·Notion에서 온톨로지 연결이 가능합니다.
+    </p>
+    <label class="checkbox">
+      <input type="checkbox" id="enableWikiFormat" />
+      Wiki 서식 활성화 (wiki-llm Source page — 평문 메타데이터 + [[folder/slug]] 타입 링크)
+    </label>
+    <div class="hint" style="margin: 4px 0 16px">
+      AI가 꺼진 경우에도 섹션 구조는 생성됩니다. 엔티티 자동 추출 및 [[wikilinks]] 주입은 AI 필요.
+    </div>
+
+    <div style="margin-top:8px">
+      <label style="font-weight:500; display:block; margin-bottom:4px">저장 하위 폴더 목록 (한 줄에 하나)</label>
+      <textarea id="subfolders" rows="5" style="width:100%; font-family:monospace; font-size:13px"
+        placeholder="개발&#10;비즈니스&#10;강의노트&#10;리서치"></textarea>
+      <div class="hint" style="margin-top:4px">
+        팝업에서 캡처 전 폴더를 선택할 수 있습니다. 비워두면 루트(기본 경로)에 저장합니다.
+      </div>
+    </div>
+
+    <div style="margin-top:20px">
+      <label style="font-weight:500; display:block; margin-bottom:4px">
+        🧭 AI 요약 메타 지침
+        <span class="hint" style="font-weight:400; margin-left:6px">— CLAUDE.md처럼 모든 요약 프롬프트 앞에 항상 적용됩니다</span>
+      </label>
+      <textarea id="summaryInstruction" rows="4" style="width:100%; font-family:monospace; font-size:13px"
+        placeholder="예: 문장을 항상 완전하게 작성하세요. 핵심 포인트는 각 항목이 마침표로 끝나는 완전한 문장이어야 합니다."></textarea>
+      <div class="hint" style="margin-top:4px">
+        YouTube 요약·웹 요약 양쪽에 적용됩니다. AI가 문장을 중간에 끊거나 언어가 섞이는 경우 여기에 지침을 추가하세요.
+        비워두면 기본 지침이 사용됩니다.
       </div>
     </div>
   </div>

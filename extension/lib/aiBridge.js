@@ -48,7 +48,7 @@ export function checkHelperHealth() {
   return callHelper({ action: "health" }, { timeoutMs: 5000 });
 }
 
-export function summarize({ provider, captionsText, meta, language = "ko", ollamaModel, claudeModel }) {
+export function summarize({ provider, captionsText, meta, language = "ko", ollamaModel, claudeModel, instruction = "" }) {
   const cfg = AI_CONFIG.SUMMARY;
   const targetName = sourceLangName(language);
   const isKo = language.startsWith("ko");
@@ -58,6 +58,9 @@ export function summarize({ provider, captionsText, meta, language = "ko", ollam
   const { WHAT, WHY, HOW, TAKEAWAY } = cfg.LAYER_LABELS;
 
   const prompt = [
+    // 사용자 정의 메타 지침 (비어있으면 생략)
+    instruction ? `[User instruction — follow strictly]: ${instruction}` : null,
+    instruction ? `` : null,
     `You are a senior analyst. Analyze the following YouTube transcript and produce a structured report in ${targetName}.`,
     ``,
     `**Video info:**`,
@@ -232,4 +235,100 @@ export function transcribeAudio({ audioBase64, language = "ko" }) {
     { action: "transcribe", audioBase64, language, format: "webm" },
     { timeoutMs: 600000 }
   );
+}
+
+// 웹 페이지 본문 요약 — YouTube 자막과 달리 타임스탬프 없음
+// 프롬프트: 개요 + 핵심 포인트 + 한 줄 요약 (한국어 고정)
+export function summarizeWeb({ provider, bodyText, title, ollamaModel, claudeModel, instruction = "" }) {
+  const prompt = [
+    instruction ? `[User instruction — follow strictly]: ${instruction}` : null,
+    instruction ? `` : null,
+    `You are a senior analyst. Read the following web article and produce a structured summary in Korean (한국어).`,
+    ``,
+    `**Article title:** ${title || "(제목 없음)"}`,
+    ``,
+    `**Article body:**`,
+    bodyText,
+    ``,
+    `**Output in Korean — plain Markdown, no code blocks, no preamble. Follow this EXACT structure:**`,
+    ``,
+    `### 개요`,
+    `(2~3 sentences: what this article is about and its key conclusion)`,
+    ``,
+    `### 핵심 포인트`,
+    `(5~10 bullets, each a complete sentence, the most important facts or insights)`,
+    `- `,
+    ``,
+    `### 한 줄 요약`,
+    `(Single sentence: the single most important takeaway from this article)`,
+    ``,
+    `모든 출력은 한국어로. 외국어 단어는 원문 유지(예: AI, Python, React). 중국어/일본어 혼용 금지.`,
+  ].filter((l) => l !== null).join("\n");
+
+  return callHelper(
+    { action: "summarize", provider, prompt, ollamaModel, claudeModel },
+    { timeoutMs: AI_CONFIG.TIMEOUTS.SUMMARIZE }
+  );
+}
+
+// Obsidian vault에 파일 직접 저장 (헬퍼의 write_file 액션 사용)
+export function writeObsidianFile({ path, content }) {
+  return callHelper(
+    { action: "write_file", path, content },
+    { timeoutMs: 10000 }
+  );
+}
+
+// ── 엔티티 추출 (wiki 서식용) ─────────────────────────────────────────────
+// 텍스트에서 인물·조직·기술·개념을 LLM으로 추출해 JSON으로 반환.
+// 실패 시 빈 객체를 반환하므로 호출 측에서 try/catch 불필요.
+// @returns {{ people: string[], companies: string[], technologies: string[], concepts: string[] }}
+export async function extractEntities({ provider, text, title, ollamaModel, claudeModel }) {
+  const MAX_CHARS = 4000;
+  const truncated = String(text || "").slice(0, MAX_CHARS);
+
+  const prompt = [
+    `Extract named entities from the following content. Return ONLY a JSON object — no explanation, no code block.`,
+    ``,
+    `JSON format (all values are arrays of strings, empty array if none):`,
+    `{"people":[],"companies":[],"technologies":[],"concepts":[]}`,
+    ``,
+    `Rules:`,
+    `- people: real named individuals, speakers, authors (NOT generic job titles)`,
+    `- companies: organizations, brands, institutions, channels`,
+    `- technologies: tools, frameworks, languages, platforms, software products`,
+    `- concepts: domain terms, methodologies, ideas (max 8, most important only)`,
+    `- Keep names in their natural form (e.g. "Claude", "Next.js", "Sam Altman")`,
+    `- Deduplicate. Sort by importance (most prominent first).`,
+    `- Respond ONLY with the JSON object. No markdown, no backticks.`,
+    ``,
+    `Content title: ${title || "(없음)"}`,
+    ``,
+    `Content:`,
+    truncated,
+    ``,
+    `JSON:`,
+  ].join("\n");
+
+  try {
+    const res = await callHelper(
+      { action: "summarize", provider, prompt, ollamaModel, claudeModel },
+      { timeoutMs: 45000 }
+    );
+    const raw = (res.text || "").trim();
+    // JSON 블록만 추출 (LLM이 앞뒤에 텍스트를 넣는 경우 대응)
+    const jsonStart = raw.indexOf("{");
+    const jsonEnd   = raw.lastIndexOf("}");
+    if (jsonStart === -1 || jsonEnd === -1) throw new Error("no JSON in response");
+    const parsed = JSON.parse(raw.slice(jsonStart, jsonEnd + 1));
+    return {
+      people:       Array.isArray(parsed.people)       ? parsed.people       : [],
+      companies:    Array.isArray(parsed.companies)    ? parsed.companies    : [],
+      technologies: Array.isArray(parsed.technologies) ? parsed.technologies : [],
+      concepts:     Array.isArray(parsed.concepts)     ? parsed.concepts     : [],
+    };
+  } catch (e) {
+    console.warn("[wiki] 엔티티 추출 실패, 빈 entities로 계속:", e.message);
+    return { people: [], companies: [], technologies: [], concepts: [] };
+  }
 }
