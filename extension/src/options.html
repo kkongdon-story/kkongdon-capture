@@ -262,6 +262,21 @@
                  style="flex:1; min-width:0; box-sizing:border-box" />
           <button type="button" id="btnFetchNotionId">현재 탭에서 가져오기</button>
         </div>
+
+        <!-- Notion 탭 여러 개일 때 선택 드롭다운 -->
+        <div id="notionTabSelectWrap" style="display:none; margin-bottom:6px">
+          <select id="notionTabSelect" style="width:100%; box-sizing:border-box; margin-bottom:4px"></select>
+          <button type="button" id="btnConfirmNotionTab">이 페이지로 설정</button>
+        </div>
+
+        <!-- Notion 탭 없을 때 URL 직접 붙여넣기 -->
+        <div id="notionUrlPasteWrap" style="display:none; margin-bottom:6px">
+          <input type="text" id="notionUrlPaste"
+                 placeholder="Notion 페이지 URL 붙여넣기 → ID 자동 추출"
+                 style="width:100%; box-sizing:border-box" />
+          <div class="hint" style="margin-top:2px">붙여넣으면 ID가 자동으로 입력됩니다.</div>
+        </div>
+
         <div class="hint" style="margin-bottom:10px">
           Notion 페이지 URL 맨 끝 32자리.<br>
           예: notion.so/제목-<strong>a1b2c3d4...</strong> → 그 32자리를 붙여넣기.<br>

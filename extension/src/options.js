@@ -386,24 +386,63 @@ function extractNotionPageId(url) {
 $("btnFetchNotionId")?.addEventListener("click", async () => {
   const btn = $("btnFetchNotionId");
   btn.disabled = true;
-  btn.textContent = "가져오는 중…";
+  btn.textContent = "찾는 중…";
   try {
-    // 마지막으로 포커스된 창의 활성 탭 (options 창 제외)
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (!tab?.url?.includes("notion.so")) {
-      alert("현재 활성 탭이 Notion 페이지가 아닙니다.\nNotion 페이지를 열고 다시 시도해주세요.");
+    // 옵션 페이지가 전체 탭으로 열리므로 lastFocusedWindow 대신
+    // 열려 있는 모든 Notion 탭을 URL 패턴으로 직접 검색
+    const notionTabs = await chrome.tabs.query({ url: "https://www.notion.so/*" });
+
+    if (notionTabs.length === 0) {
+      // Notion 탭 없음 → URL 붙여넣기 입력창 토글
+      const wrap = $("notionUrlPasteWrap");
+      if (wrap) {
+        wrap.style.display = wrap.style.display === "none" ? "block" : "none";
+        if (wrap.style.display === "block") $("notionUrlPaste").focus();
+      }
       return;
     }
-    const id = extractNotionPageId(tab.url);
-    if (!id) {
-      alert("URL에서 페이지 ID를 찾을 수 없습니다.\n직접 32자리를 붙여넣어 주세요.");
+
+    if (notionTabs.length === 1) {
+      // 탭 하나면 바로 적용
+      const id = extractNotionPageId(notionTabs[0].url);
+      if (id) { $("notionPageId").value = id; $("notionTestResult").textContent = ""; }
+      else { $("notionTestResult").textContent = "⚠️ URL에서 ID를 찾을 수 없습니다."; $("notionTestResult").style.color = "#b45309"; }
       return;
     }
-    $("notionPageId").value = id;
-    $("notionTestResult").textContent = "";
+
+    // 여러 탭 → 드롭다운 선택
+    const sel = $("notionTabSelect");
+    if (!sel) return;
+    sel.innerHTML = notionTabs.map((t, i) =>
+      `<option value="${i}">${t.title?.slice(0, 50) || t.url}</option>`
+    ).join("");
+    sel.dataset.tabs = JSON.stringify(notionTabs.map(t => t.url));
+    $("notionTabSelectWrap").style.display = "block";
   } finally {
     btn.disabled = false;
     btn.textContent = "현재 탭에서 가져오기";
+  }
+});
+
+// Notion 탭 드롭다운 확인
+$("btnConfirmNotionTab")?.addEventListener("click", () => {
+  const sel = $("notionTabSelect");
+  const urls = JSON.parse(sel?.dataset.tabs || "[]");
+  const url = urls[parseInt(sel?.value || "0", 10)];
+  if (!url) return;
+  const id = extractNotionPageId(url);
+  if (id) { $("notionPageId").value = id; $("notionTestResult").textContent = ""; }
+  $("notionTabSelectWrap").style.display = "none";
+});
+
+// URL 직접 붙여넣기 → ID 파싱
+$("notionUrlPaste")?.addEventListener("input", function () {
+  const id = extractNotionPageId(this.value.trim());
+  if (id) {
+    $("notionPageId").value = id;
+    $("notionTestResult").textContent = "";
+    $("notionUrlPasteWrap").style.display = "none";
+    this.value = "";
   }
 });
 
