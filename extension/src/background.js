@@ -185,7 +185,7 @@ async function handleWebCapture(tabId, url, format = "md", subfolder = "") {
     await saveFile(selFilename, selMd, "text/markdown");
     chrome.notifications.create({
       type: "basic", iconUrl: chrome.runtime.getURL("icons/128.png"),
-      title: "유튜브 스크립트 캡쳐",
+      title: "KKONGDON Clip",
       message: `선택 영역 저장됨: ${selFilename}`,
     }).catch(() => {});
     return { ok: true, filename: selFilename };
@@ -400,7 +400,7 @@ ${summaryHtml}
   const _webToastLine = extractToastLine(aiSummary?.text);
   await chrome.notifications.create({
     type: "basic", iconUrl: chrome.runtime.getURL("icons/128.png"),
-    title: "유튜브 스크립트 캡쳐",
+    title: "KKONGDON Clip",
     message: _webToastLine ? `📝 ${_webToastLine}` : `웹 캡쳐 저장됨 (${ext.toUpperCase()}): ${filename}`,
   }).catch(() => {});
 
@@ -1140,7 +1140,7 @@ async function handleCapture(msg, sender) {
   const _ytToastLine = extractToastLine(aiSummary?.text);
   await chrome.notifications.create({
     type: "basic", iconUrl: chrome.runtime.getURL("icons/128.png"),
-    title: "유튜브 스크립트 캡쳐",
+    title: "KKONGDON Clip",
     message: _ytToastLine ? `📝 ${_ytToastLine}` : `저장됨 (${info.label}): ${filename}${premium ? " (프리미엄)" : ""}`,
   }).catch(() => {});
 
@@ -1416,7 +1416,7 @@ async function handleSelectionCapture(selectionText, tab) {
   saveToHistory({ title: tab.title || tab.url, url: tab.url, filename, format: "md", type: "selection" });
   await chrome.notifications.create({
     type: "basic", iconUrl: chrome.runtime.getURL("icons/128.png"),
-    title: "유튜브 스크립트 캡쳐",
+    title: "KKONGDON Clip",
     message: `✏️ 선택 텍스트 저장됨: ${selectionText.slice(0, 60)}…`,
   }).catch(() => {});
   return downloadId;
