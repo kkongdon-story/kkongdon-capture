@@ -372,4 +372,94 @@ document.querySelectorAll("#langGrid input").forEach((cb) => {
   cb.addEventListener("change", updateLangChipStyle);
 });
 
+// ── ④ 현재 탭에서 Notion 페이지 ID 자동 추출 ─────────────────────────────────
+// Notion URL 형식: notion.so/제목-{32hex} 또는 UUID with dashes
+function extractNotionPageId(url) {
+  // UUID 형식 우선 (8-4-4-4-12) — 먼저 찾아야 앞 8자만 잡히는 오파싱 방지
+  const uuidM = url.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+  if (uuidM) return uuidM[1].replace(/-/g, "");
+  // 하이픈 없는 32자 헥스
+  const hexM = url.match(/([a-f0-9]{32})(?:[^a-f0-9]|$)/i);
+  return hexM ? hexM[1] : null;
+}
+
+$("btnFetchNotionId")?.addEventListener("click", async () => {
+  const btn = $("btnFetchNotionId");
+  btn.disabled = true;
+  btn.textContent = "가져오는 중…";
+  try {
+    // 마지막으로 포커스된 창의 활성 탭 (options 창 제외)
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!tab?.url?.includes("notion.so")) {
+      alert("현재 활성 탭이 Notion 페이지가 아닙니다.\nNotion 페이지를 열고 다시 시도해주세요.");
+      return;
+    }
+    const id = extractNotionPageId(tab.url);
+    if (!id) {
+      alert("URL에서 페이지 ID를 찾을 수 없습니다.\n직접 32자리를 붙여넣어 주세요.");
+      return;
+    }
+    $("notionPageId").value = id;
+    $("notionTestResult").textContent = "";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "현재 탭에서 가져오기";
+  }
+});
+
+// ── ⑤ Notion API 연결 테스트 ─────────────────────────────────────────────────
+// options 페이지는 extension page이므로 host_permissions(<all_urls>) 덕분에
+// fetch()로 api.notion.com을 직접 호출할 수 있음 — background 중계 불필요
+$("btnTestNotion")?.addEventListener("click", async () => {
+  const btn = $("btnTestNotion");
+  const result = $("notionTestResult");
+  const apiKey = $("notionApiKey")?.value.trim();
+  const pageId = $("notionPageId")?.value.trim();
+
+  if (!apiKey) { result.textContent = "⚠️ 액세스 토큰을 먼저 입력하세요."; result.style.color = "#b45309"; return; }
+  if (!pageId) { result.textContent = "⚠️ 페이지 ID를 먼저 입력하세요.";  result.style.color = "#b45309"; return; }
+
+  btn.disabled = true;
+  result.style.color = "#6b7280";
+  result.textContent = "테스트 중…";
+
+  try {
+    const res = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Notion-Version": "2022-06-28",
+      },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      // 페이지 제목 추출 (title 속성이 있는 경우)
+      const titleProp = Object.values(data.properties || {}).find(p => p.type === "title");
+      const pageTitle = titleProp?.title?.[0]?.plain_text || data.id;
+      result.style.color = "#166534";
+      result.textContent = `✓ 연결 성공 — "${pageTitle}"`;
+    } else {
+      const err = await res.json().catch(() => ({}));
+      const msg = err.message || res.statusText;
+      if (res.status === 401) {
+        result.style.color = "#991b1b";
+        result.textContent = `✗ 토큰 오류 (401) — 액세스 토큰을 다시 확인해주세요.`;
+      } else if (res.status === 403) {
+        result.style.color = "#991b1b";
+        result.textContent = `✗ 접근 거부 (403) — 페이지에서 연결(Connect) 버튼으로 연동을 추가했는지 확인하세요.`;
+      } else if (res.status === 404) {
+        result.style.color = "#991b1b";
+        result.textContent = `✗ 페이지 없음 (404) — 페이지 ID를 다시 확인해주세요.`;
+      } else {
+        result.style.color = "#991b1b";
+        result.textContent = `✗ 오류 ${res.status}: ${msg}`;
+      }
+    }
+  } catch (e) {
+    result.style.color = "#991b1b";
+    result.textContent = `✗ 네트워크 오류: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 load();

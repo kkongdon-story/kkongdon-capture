@@ -243,21 +243,37 @@
         <input type="checkbox" id="enableNotion" /> Notion 페이지에 자동 저장
       </label>
       <div style="margin-left:24px">
+
+        <!-- 액세스 토큰 -->
         <label style="font-weight:500; display:block; margin-bottom:4px; font-size:13px">액세스 토큰</label>
         <input type="password" id="notionApiKey" placeholder="ntn_..."
                style="width:100%; box-sizing:border-box; margin-bottom:4px" />
-        <div class="hint" style="margin-bottom:8px">
+        <div class="hint" style="margin-bottom:10px">
           <a href="https://www.notion.so/profile/integrations" target="_blank">notion.so/profile/integrations</a>
           → 새 연동 만들기 → 토큰 복사.<br>
+          ② 연동 생성 시 <strong>콘텐츠 삽입</strong> 권한 활성화 필요 (기본값이 꺼진 경우 있음).<br>
           ⚠️ 발급 후 대상 페이지 우측 상단 <strong>연결(Connect) 버튼</strong>으로 연동을 추가해야 저장됩니다.
         </div>
+
+        <!-- 대상 페이지 ID -->
         <label style="font-weight:500; display:block; margin-bottom:4px; font-size:13px">대상 페이지 ID</label>
-        <input type="text" id="notionPageId" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-               style="width:100%; box-sizing:border-box" />
-        <div class="hint" style="margin-top:4px">
-          Notion 페이지 URL 맨 끝 32자리.<br>
-          예: notion.so/제목-<strong>a1b2c3d4e5f6...</strong> → 그 32자리를 붙여넣기.
+        <div style="display:flex; gap:6px; margin-bottom:4px">
+          <input type="text" id="notionPageId" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                 style="flex:1; min-width:0; box-sizing:border-box" />
+          <button type="button" id="btnFetchNotionId">현재 탭에서 가져오기</button>
         </div>
+        <div class="hint" style="margin-bottom:10px">
+          Notion 페이지 URL 맨 끝 32자리.<br>
+          예: notion.so/제목-<strong>a1b2c3d4...</strong> → 그 32자리를 붙여넣기.<br>
+          ③ <strong>일반 페이지 ID만 지원</strong>합니다. 데이터베이스 페이지 ID는 동작하지 않습니다.
+        </div>
+
+        <!-- 연결 테스트 -->
+        <div style="display:flex; align-items:center; gap:10px">
+          <button type="button" id="btnTestNotion">연결 테스트</button>
+          <span id="notionTestResult" style="font-size:13px"></span>
+        </div>
+
       </div>
     </div>
   </div>
